@@ -1,7 +1,7 @@
 {
   "version": "v11.0.0",
   "firmware_url": "https://github.com/khaoullaaa/OTA_Secure_ESP8266-vs2/releases/download/v11.0.0/firmware.bin",
-  "sha256": "3dfe692f9b655f8272fcf35df79161cbe2cd3b06774c19d7768d7b538d2411d6",
+  "sha256": "27d47440a9eebd4fe21139a1bcb7158aac2f45349510dfe4d25326b75d46b69c",
   "encrypted": true,
   "encryption": "AES-256-CBC"
 }
