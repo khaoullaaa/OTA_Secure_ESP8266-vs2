@@ -40,13 +40,12 @@ const uint8_t AES_KEY[32] = {
 
 // Firmware version (set automatically in CI via -DFW_VERSION_STR="vX.Y.Z")
 #ifndef FW_VERSION_STR
-#define FW_VERSION_STR "v8.0.0"
+#define FW_VERSION_STR "v9.0.0"
 #endif
 static const char* FW_VERSION = FW_VERSION_STR;
 // ====================================================
 
-// Derived URLs (no need to edit)
-String manifestUrl;
+// Global variables for OTA
 String currentVersion = FW_VERSION;
 String latestVersion = "";
 String firmwareUrl = "";
@@ -115,23 +114,24 @@ bool checkForUpdate() {
     
     HTTPClient http;
     http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
-    http.setTimeout(10000);
+    http.setTimeout(15000);
     
-    // Add cache-busting parameter to bypass GitHub's ~5 minute cache
-    String cacheBustUrl = manifestUrl + "?t=" + String(millis());
+    // Use GitHub API for INSTANT updates (no caching unlike raw.githubusercontent.com)
+    String apiUrl = "https://api.github.com/repos/" + String(GITHUB_USER) + "/" + String(GITHUB_REPO) + "/contents/manifest.json";
+    Serial.printf("[OTA] Fetching from GitHub API (no cache)...\n");
     
-    if (!http.begin(client, cacheBustUrl)) {
-        Serial.println("[OTA] Failed to connect to manifest URL");
+    if (!http.begin(client, apiUrl)) {
+        Serial.println("[OTA] Failed to connect to GitHub API");
         return false;
     }
     
-    // Add headers to prevent caching
-    http.addHeader("Cache-Control", "no-cache, no-store, must-revalidate");
-    http.addHeader("Pragma", "no-cache");
+    // GitHub API requires User-Agent header
+    http.addHeader("User-Agent", "ESP8266-OTA");
+    http.addHeader("Accept", "application/vnd.github.v3.raw");  // Get raw content directly
     
     int httpCode = http.GET();
     if (httpCode != 200) {
-        Serial.printf("[OTA] Manifest fetch failed: %d\n", httpCode);
+        Serial.printf("[OTA] GitHub API fetch failed: %d\n", httpCode);
         http.end();
         return false;
     }
@@ -140,7 +140,7 @@ bool checkForUpdate() {
     http.end();
     
     // Parse JSON
-    StaticJsonDocument<512> doc;
+    JsonDocument doc;
     DeserializationError err = deserializeJson(doc, payload);
     if (err) {
         Serial.printf("[OTA] JSON parse error: %s\n", err.c_str());
@@ -417,13 +417,10 @@ void setup() {
     Serial.println("\n\n================================");
     Serial.println("  ESP8266 Secure OTA + AES-256");
     Serial.printf("  Version: %s\n", FW_VERSION);
+    Serial.println("  Using GitHub API (instant updates)");
     Serial.println("================================\n");
     
-    // Build manifest URL with cache-busting parameter
-    // GitHub raw.githubusercontent.com caches for ~5 minutes
-    // Adding a random parameter helps bypass cache
-    manifestUrl = "https://raw.githubusercontent.com/" + String(GITHUB_USER) + "/" + String(GITHUB_REPO) + "/main/manifest.json";
-    Serial.printf("Manifest: %s\n", manifestUrl.c_str());
+    Serial.printf("GitHub: %s/%s\n", GITHUB_USER, GITHUB_REPO);
     
     // Connect WiFi
     Serial.printf("Connecting to %s", WIFI_SSID);
