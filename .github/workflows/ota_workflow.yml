@@ -4,8 +4,6 @@ on:
   push:
     branches:
       - main
-    tags:
-      - 'v*'
   workflow_dispatch:
 
 permissions:
@@ -20,6 +18,32 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Generate version tag
+        id: version
+        run: |
+          # Get the latest tag, or start at v1.0.0
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          echo "Latest tag: $LATEST_TAG"
+          
+          # Extract version numbers
+          VERSION=${LATEST_TAG#v}
+          MAJOR=$(echo $VERSION | cut -d. -f1)
+          MINOR=$(echo $VERSION | cut -d. -f2)
+          PATCH=$(echo $VERSION | cut -d. -f3)
+          
+          # Auto-increment patch version
+          PATCH=$((PATCH + 1))
+          NEW_VERSION="v${MAJOR}.${MINOR}.${PATCH}"
+          
+          echo "New version: $NEW_VERSION"
+          echo "VERSION=$NEW_VERSION" >> $GITHUB_OUTPUT
+          
+          # Create and push the tag
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag $NEW_VERSION
+          git push origin $NEW_VERSION
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -38,8 +62,9 @@ jobs:
 
       - name: Set version in sketch
         run: |
-          VERSION="${{ github.ref_name }}"
+          VERSION="${{ steps.version.outputs.VERSION }}"
           sed -i "s/#define FW_VERSION_STR \"v0.0.0\"/#define FW_VERSION_STR \"${VERSION}\"/" OTA_Secure/OTA_Secure.ino
+          echo "Building version: $VERSION"
 
       - name: Compile firmware
         run: |
@@ -70,36 +95,39 @@ jobs:
 
       - name: Create release manifest artifact
         run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
           cd firmware_build
           cat > manifest.json << EOF
           {
-            "version": "${{ github.ref_name }}",
-            "firmware_url": "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/firmware.bin",
+            "version": "${VERSION}",
+            "firmware_url": "https://github.com/${{ github.repository }}/releases/download/${VERSION}/firmware.bin",
             "sha256": "${{ env.SHA256 }}"
           }
           EOF
 
       - name: Commit updated manifest to main
-        if: startsWith(github.ref, 'refs/tags/')
         run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          git fetch origin main
           git checkout main
           cat > manifest.json << EOF
           {
-            "version": "${{ github.ref_name }}",
-            "firmware_url": "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/firmware.bin",
+            "version": "${VERSION}",
+            "firmware_url": "https://github.com/${{ github.repository }}/releases/download/${VERSION}/firmware.bin",
             "sha256": "${{ env.SHA256 }}"
           }
           EOF
           git add manifest.json
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git commit -m "chore: update manifest for ${{ github.ref_name }}" || exit 0
+          git commit -m "chore: update manifest for ${VERSION} [skip ci]" || exit 0
           git push origin HEAD:main
 
       - name: Create GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.version.outputs.VERSION }}
+          name: Release ${{ steps.version.outputs.VERSION }}
           files: |
             firmware_build/firmware.bin
             firmware_build/manifest.json
