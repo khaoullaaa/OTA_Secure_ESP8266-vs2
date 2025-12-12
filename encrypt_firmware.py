@@ -2,10 +2,14 @@
 """
 AES-256-CTR Firmware Encryption Script
 Encrypts firmware.bin with AES-256 in CTR mode and prepends IV
+
+Uses a simple CTR counter format compatible with BearSSL:
+- IV (16 bytes): First 12 bytes = nonce, Last 4 bytes = initial counter (big-endian)
 """
 
 import os
 import sys
+import struct
 from Crypto.Cipher import AES
 from Crypto.Random import get_random_bytes
 
@@ -26,12 +30,16 @@ def encrypt_firmware(input_file, output_file):
     
     print(f"[ENCRYPT] Firmware size: {len(plaintext)} bytes")
     
-    # Generate random IV (16 bytes for AES)
-    iv = get_random_bytes(16)
-    print(f"[ENCRYPT] Generated IV: {iv.hex()}")
+    # Generate random nonce (12 bytes) + counter starts at 1 (4 bytes big-endian)
+    nonce = get_random_bytes(12)
+    initial_counter = 1
+    iv = nonce + struct.pack('>I', initial_counter)  # Big-endian 32-bit counter
     
-    # Create AES cipher in CTR mode
-    cipher = AES.new(AES_KEY, AES.MODE_CTR, nonce=iv[:8], initial_value=iv[8:])
+    print(f"[ENCRYPT] Nonce (12 bytes): {nonce.hex()}")
+    print(f"[ENCRYPT] Full IV (16 bytes): {iv.hex()}")
+    
+    # Create AES cipher in CTR mode with nonce and initial counter
+    cipher = AES.new(AES_KEY, AES.MODE_CTR, nonce=nonce, initial_value=initial_counter)
     
     # Encrypt the firmware
     ciphertext = cipher.encrypt(plaintext)
@@ -39,7 +47,7 @@ def encrypt_firmware(input_file, output_file):
     
     # Write IV + encrypted firmware
     with open(output_file, 'wb') as f:
-        f.write(iv)
+        f.write(iv)  # 16 bytes: 12-byte nonce + 4-byte counter
         f.write(ciphertext)
     
     total_size = len(iv) + len(ciphertext)

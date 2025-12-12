@@ -40,7 +40,7 @@ const uint8_t AES_KEY[32] = {
 
 // Firmware version (set automatically in CI via -DFW_VERSION_STR="vX.Y.Z")
 #ifndef FW_VERSION_STR
-#define FW_VERSION_STR "v5.0.0"
+#define FW_VERSION_STR "v6.0.0"
 #endif
 static const char* FW_VERSION = FW_VERSION_STR;
 // ====================================================
@@ -117,10 +117,17 @@ bool checkForUpdate() {
     http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
     http.setTimeout(10000);
     
-    if (!http.begin(client, manifestUrl)) {
+    // Add cache-busting parameter to bypass GitHub's ~5 minute cache
+    String cacheBustUrl = manifestUrl + "?t=" + String(millis());
+    
+    if (!http.begin(client, cacheBustUrl)) {
         Serial.println("[OTA] Failed to connect to manifest URL");
         return false;
     }
+    
+    // Add headers to prevent caching
+    http.addHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+    http.addHeader("Pragma", "no-cache");
     
     int httpCode = http.GET();
     if (httpCode != 200) {
@@ -251,14 +258,22 @@ bool performUpdate() {
     Serial.println("[AES] Initializing AES-256-CTR decryption...");
     WiFiClient* stream = http.getStreamPtr();
     
-    // Read IV (first 16 bytes)
+    // Read IV (first 16 bytes): 12-byte nonce + 4-byte counter (big-endian)
     uint8_t iv[16];
     size_t ivRead = 0;
-    while (ivRead < 16) {
+    unsigned long ivTimeout = millis() + 10000;
+    while (ivRead < 16 && millis() < ivTimeout) {
         if (stream->available()) {
             ivRead += stream->readBytes(iv + ivRead, 16 - ivRead);
         }
         yield();
+    }
+    
+    if (ivRead < 16) {
+        Serial.println("[AES] ❌ FAILED - Could not read IV");
+        Update.end(false);
+        http.end();
+        return false;
     }
     
     Serial.print("[AES] IV (hex): ");
@@ -267,6 +282,17 @@ bool performUpdate() {
         Serial.print(iv[i], HEX);
     }
     Serial.println();
+    Serial.print("[AES] Nonce (12 bytes): ");
+    for (int i = 0; i < 12; i++) {
+        if (iv[i] < 0x10) Serial.print("0");
+        Serial.print(iv[i], HEX);
+    }
+    Serial.println();
+    
+    // Extract initial counter from IV (last 4 bytes, big-endian)
+    uint32_t ctrValue = ((uint32_t)iv[12] << 24) | ((uint32_t)iv[13] << 16) | 
+                        ((uint32_t)iv[14] << 8) | (uint32_t)iv[15];
+    Serial.printf("[AES] Initial counter value: %u\n", ctrValue);
     
     // Initialize AES CTR mode
     br_aes_ct_ctr_keys aesCtx;
@@ -282,16 +308,21 @@ bool performUpdate() {
     uint8_t buf[512];
     size_t downloaded = 16; // Already read IV
     size_t written = 0;
+    unsigned long lastActivity = millis();
+    
+    // Track CTR counter position (starts after IV read)
+    uint32_t ctr = ctrValue;
     
     while (downloaded < (size_t)encryptedSize) {
         size_t available = stream->available();
         if (available) {
+            lastActivity = millis();
             size_t toRead = min(available, sizeof(buf));
             size_t bytesRead = stream->readBytes(buf, toRead);
             
             if (bytesRead > 0) {
-                // Decrypt block
-                br_aes_ct_ctr_run(&aesCtx, iv, 0, buf, bytesRead);
+                // Decrypt block - br_aes_ct_ctr_run returns new counter value
+                ctr = br_aes_ct_ctr_run(&aesCtx, iv, ctr, buf, bytesRead);
                 
                 // Update hash with DECRYPTED data
                 br_sha256_update(&sha256ctx, buf, bytesRead);
@@ -314,6 +345,14 @@ bool performUpdate() {
                     Serial.printf("[AES/OTA] Decrypted & written: %d%%\n", percent);
                     lastPercent = percent;
                 }
+            }
+        } else {
+            // Check for timeout
+            if (millis() - lastActivity > 30000) {
+                Serial.println("[OTA] ❌ Download timeout");
+                Update.end(false);
+                http.end();
+                return false;
             }
         }
         yield();
@@ -369,11 +408,13 @@ void setup() {
     delay(100);
     
     Serial.println("\n\n================================");
-    Serial.println("  ESP8266 Secure OTA");
+    Serial.println("  ESP8266 Secure OTA + AES-256");
     Serial.printf("  Version: %s\n", FW_VERSION);
     Serial.println("================================\n");
     
-    // Build manifest URL
+    // Build manifest URL with cache-busting parameter
+    // GitHub raw.githubusercontent.com caches for ~5 minutes
+    // Adding a random parameter helps bypass cache
     manifestUrl = "https://raw.githubusercontent.com/" + String(GITHUB_USER) + "/" + String(GITHUB_REPO) + "/main/manifest.json";
     Serial.printf("Manifest: %s\n", manifestUrl.c_str());
     
