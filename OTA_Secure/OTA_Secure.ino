@@ -40,7 +40,7 @@ const uint8_t AES_KEY[32] = {
 
 // Firmware version (set automatically in CI via -DFW_VERSION_STR="vX.Y.Z")
 #ifndef FW_VERSION_STR
-#define FW_VERSION_STR "v11.0.0"
+#define FW_VERSION_STR "v10.0.0"
 #endif
 static const char* FW_VERSION = FW_VERSION_STR;
 // ====================================================
@@ -306,81 +306,87 @@ bool performUpdate() {
     
     size_t downloaded = 0;
     size_t written = 0;
+    size_t buffered = 0;  // Bytes accumulated in buffer
     unsigned long startTime = millis();
-    unsigned long lastProgress = millis();
+    unsigned long lastActivity = millis();
     
     Serial.println("[OTA] Starting download + decrypt + flash...");
     
-    while (downloaded < (size_t)encryptedDataSize) {
-        // Wait for data with timeout
-        unsigned long waitStart = millis();
-        while (stream->available() < 16 && downloaded < (size_t)encryptedDataSize) {
-            if (millis() - waitStart > 10000) {
-                Serial.println("[OTA] ❌ Download timeout");
-                free(buf);
-                Update.end(false);
-                http.end();
-                return false;
-            }
-            yield();
-        }
-        
+    while (downloaded < (size_t)encryptedDataSize || buffered >= 16) {
+        // Read available data into buffer
         size_t available = stream->available();
-        if (available >= 16) {
-            // Read as much as possible (must be multiple of 16 for AES-CBC)
-            size_t toRead = min(available, BUFFER_SIZE);
-            toRead = (toRead / 16) * 16;  // Round to 16-byte boundary
-            
-            // Don't read past end of encrypted data
+        if (available > 0 && buffered < BUFFER_SIZE) {
+            size_t toRead = min(available, BUFFER_SIZE - buffered);
+            // Don't read more than remaining encrypted data
             if (downloaded + toRead > (size_t)encryptedDataSize) {
                 toRead = encryptedDataSize - downloaded;
-                toRead = (toRead / 16) * 16;  // Keep 16-byte alignment
             }
             
-            if (toRead >= 16) {
-                size_t bytesRead = stream->readBytes(buf, toRead);
-                
-                if (bytesRead > 0 && bytesRead % 16 == 0) {
-                    // Decrypt in-place using CBC mode
-                    br_aes_ct_cbcdec_run(&aesCtx, iv, buf, bytesRead);
-                    
-                    // Calculate actual data to write (excluding padding at end)
-                    size_t dataToWrite = bytesRead;
-                    if (written + dataToWrite > originalSize) {
-                        dataToWrite = originalSize - written;
-                    }
-                    
-                    if (dataToWrite > 0) {
-                        // Update hash with decrypted data
-                        br_sha256_update(&sha256ctx, buf, dataToWrite);
-                        
-                        // Write to flash
-                        if (Update.write(buf, dataToWrite) != dataToWrite) {
-                            Serial.println("[OTA] ❌ Write failed");
-                            free(buf);
-                            Update.end(false);
-                            http.end();
-                            return false;
-                        }
-                        written += dataToWrite;
-                    }
-                    
+            if (toRead > 0) {
+                size_t bytesRead = stream->readBytes(buf + buffered, toRead);
+                if (bytesRead > 0) {
+                    buffered += bytesRead;
                     downloaded += bytesRead;
-                    
-                    // Real-time progress every 5% or every 2 seconds
-                    int percent = (written * 100) / originalSize;
-                    static int lastPercent = -1;
-                    if ((percent != lastPercent && percent % 5 == 0) || (millis() - lastProgress > 2000)) {
-                        unsigned long elapsed = (millis() - startTime) / 1000;
-                        float speed = (downloaded / 1024.0) / (elapsed > 0 ? elapsed : 1);
-                        Serial.printf("[OTA] %d%% | %u KB downloaded | %.1f KB/s\n", 
-                                     percent, downloaded / 1024, speed);
-                        lastPercent = percent;
-                        lastProgress = millis();
-                    }
+                    lastActivity = millis();
                 }
             }
         }
+        
+        // Process complete 16-byte blocks
+        size_t blocksToProcess = (buffered / 16) * 16;
+        if (blocksToProcess >= 16) {
+            // Decrypt in-place using CBC mode
+            br_aes_ct_cbcdec_run(&aesCtx, iv, buf, blocksToProcess);
+            
+            // Calculate actual data to write (excluding PKCS7 padding at the very end)
+            size_t dataToWrite = blocksToProcess;
+            if (written + dataToWrite > originalSize) {
+                dataToWrite = originalSize - written;
+            }
+            
+            if (dataToWrite > 0) {
+                // Update hash with decrypted data
+                br_sha256_update(&sha256ctx, buf, dataToWrite);
+                
+                // Write to flash
+                if (Update.write(buf, dataToWrite) != dataToWrite) {
+                    Serial.println("[OTA] ❌ Write failed");
+                    free(buf);
+                    Update.end(false);
+                    http.end();
+                    return false;
+                }
+                written += dataToWrite;
+            }
+            
+            // Move remaining bytes to start of buffer
+            size_t remaining = buffered - blocksToProcess;
+            if (remaining > 0) {
+                memmove(buf, buf + blocksToProcess, remaining);
+            }
+            buffered = remaining;
+            
+            // Progress update
+            int percent = (written * 100) / originalSize;
+            static int lastPercent = -1;
+            if (percent != lastPercent && percent % 10 == 0) {
+                unsigned long elapsed = (millis() - startTime) / 1000;
+                float speed = (written / 1024.0) / (elapsed > 0 ? elapsed : 1);
+                Serial.printf("[OTA] %d%% | %.1f KB/s\n", percent, speed);
+                lastPercent = percent;
+            }
+        }
+        
+        // Check timeout - 30 seconds of no activity
+        if (millis() - lastActivity > 30000) {
+            Serial.printf("[OTA] ❌ Timeout (downloaded: %u/%d, buffered: %u)\n", 
+                         downloaded, encryptedDataSize, buffered);
+            free(buf);
+            Update.end(false);
+            http.end();
+            return false;
+        }
+        
         yield();
     }
     
