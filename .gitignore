@@ -1,0 +1,51 @@
+# Build artifacts
+*.bin
+*.elf
+*.map
+build/
+.pio/
+.vscode/
+
+# Certificates and keys
+*.crt
+*.key
+*.pem
+
+# Configuration files with secrets
+config.h
+credentials.h
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+*.egg-info/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Test files
+test_firmware/
+*.test.bin
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
