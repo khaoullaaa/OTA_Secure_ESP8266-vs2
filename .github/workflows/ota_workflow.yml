@@ -97,6 +97,10 @@ jobs:
           VERSION="${{ steps.version.outputs.VERSION }}"
           git fetch origin main
           git checkout main
+          
+          # Pull any changes first to avoid conflicts
+          git pull --rebase origin main || true
+          
           cat > manifest.json << EOF
           {
             "version": "${VERSION}",
