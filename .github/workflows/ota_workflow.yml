@@ -37,10 +37,11 @@ jobs:
       - name: Compile firmware
         run: |
           mkdir -p firmware_build
+          VERSION="${{ github.ref_name }}"
           arduino-cli compile \
             --fqbn esp8266:esp8266:nodemcuv2 \
             --output-dir firmware_build \
-            --build-property "compiler.cpp.extra_flags=-DFW_VERSION_STR='\"${{ github.ref_name }}\"'" \
+            --build-property "compiler.cpp.extra_flags=\"-DFW_VERSION_STR=\\\"${VERSION}\\\"\"" \
             OTA_Secure
 
       - name: Normalize firmware name
