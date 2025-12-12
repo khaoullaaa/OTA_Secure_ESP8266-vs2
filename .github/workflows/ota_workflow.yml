@@ -1,0 +1,108 @@
+name: Build and Release Firmware
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Setup Arduino CLI
+        uses: arduino/setup-arduino-cli@v2
+
+      - name: Install ESP8266 platform and libraries
+        run: |
+          arduino-cli config init
+          arduino-cli core update-index
+          arduino-cli core install esp8266:esp8266
+          arduino-cli lib install ArduinoJson
+
+      - name: Compile firmware
+        run: |
+          mkdir -p firmware_build
+          arduino-cli compile \
+            --fqbn esp8266:esp8266:nodemcuv2 \
+            --output-dir firmware_build \
+            --build-property "compiler.cpp.extra_flags=-DFW_VERSION_STR=\\\"${{ github.ref_name }}\\\"" \
+            OTA_Secure
+
+      - name: Normalize firmware name
+        run: |
+          ls -la firmware_build
+          if [ -f firmware_build/OTA_Secure.ino.bin ]; then
+            mv firmware_build/OTA_Secure.ino.bin firmware_build/firmware.bin
+          elif [ -f firmware_build/OTA_Secure.bin ]; then
+            mv firmware_build/OTA_Secure.bin firmware_build/firmware.bin
+          else
+            echo "ERROR: firmware output not found" >&2
+            exit 1
+          fi
+
+      - name: Generate SHA256
+        run: |
+          cd firmware_build
+          SHA256=$(sha256sum firmware.bin | awk '{print $1}')
+          echo "SHA256=$SHA256" >> $GITHUB_ENV
+          echo "$SHA256" > sha256.txt
+
+      - name: Create release manifest artifact
+        run: |
+          cd firmware_build
+          cat > manifest.json << EOF
+          {
+            "version": "${{ github.ref_name }}",
+            "firmware_url": "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/firmware.bin",
+            "sha256": "${{ env.SHA256 }}"
+          }
+          EOF
+
+      - name: Commit updated manifest to main
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          git checkout main
+          cat > manifest.json << EOF
+          {
+            "version": "${{ github.ref_name }}",
+            "firmware_url": "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/firmware.bin",
+            "sha256": "${{ env.SHA256 }}"
+          }
+          EOF
+          git add manifest.json
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore: update manifest for ${{ github.ref_name }}" || exit 0
+          git push origin HEAD:main
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            firmware_build/firmware.bin
+            firmware_build/manifest.json
+            firmware_build/sha256.txt
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-build
+          path: firmware_build/

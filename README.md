@@ -1,35 +1,15 @@
-# 🚀 ESP8266 OTA Update System with GitHub Integration
+# 🚀 ESP8266 Secure OTA via GitHub
 
-Secure Over-The-Air (OTA) firmware update system for ESP8266 microcontrollers with automated GitHub CI/CD pipeline.
+**Simple, secure Over-The-Air firmware updates for ESP8266 using GitHub Releases + Arduino IDE.**
 
 ## ✨ Features
 
-### 🔐 Security
-- ✅ **SSL/TLS Certificate Validation** - Fingerprint verification for GitHub connections
-- ✅ **SHA256 Integrity Check** - Firmware verification before flashing
-- ✅ **Secure HTTPS** - All communications encrypted
-- ✅ **Auto-reconnect WiFi** - Network resilience
-- ✅ **Watchdog Protection** - Prevents system lockups
-
-### 📡 OTA Updates
-- ✅ **GitHub Releases** - Automatic firmware distribution
-- ✅ **Version Management** - Semantic versioning support
-- ✅ **Progress Tracking** - Real-time update progress
-- ✅ **Rollback Protection** - Version validation before update
-- ✅ **Automatic Checks** - Hourly update verification
-
-### 🌐 Web Interface
-- ✅ **Modern Responsive UI** - Mobile-friendly dashboard
-- ✅ **Real-time Status** - Live system information
-- ✅ **Manual Updates** - User-initiated firmware updates
-- ✅ **System Info** - Detailed device diagnostics
-- ✅ **LED Indicators** - Visual status feedback
-
-### 🛠️ Development
-- ✅ **GitHub Actions CI/CD** - Automated build and release
-- ✅ **Local Test Server** - Python-based OTA server
-- ✅ **Multiple Versions** - Progressive firmware examples
-- ✅ **PlatformIO Support** - Modern build system
+- ✅ **GitHub-hosted OTA** - Firmware served from GitHub Releases
+- ✅ **SHA256 verification** - Every firmware verified before flashing
+- ✅ **HTTPS downloads** - Secure firmware delivery
+- ✅ **Automatic versioning** - CI/CD updates manifest on every release
+- ✅ **Web interface** - Check and install updates via browser
+- ✅ **Auto-check on boot** - Device checks for updates automatically
 
 ---
 
@@ -37,292 +17,282 @@ Secure Over-The-Air (OTA) firmware update system for ESP8266 microcontrollers wi
 
 ### Hardware
 - **ESP8266** (NodeMCU v2 recommended)
-- **DHT11 Sensor** (for Version 2.0.0)
 - **4MB Flash** minimum
-- **USB Cable** for initial programming
+- **USB Cable** for initial upload
 
 ### Software
-- **Arduino IDE** or **PlatformIO**
-- **Python 3.8+** (for local server)
-- **GitHub Account** (for releases)
+- **Arduino IDE** 1.8.19+ or 2.x
+- **ESP8266 Board Package** 3.0.0+
+- **ArduinoJson Library** 6.21.0+
 
 ---
 
 ## 🚀 Quick Start
 
-### 1️⃣ Initial Setup
+### 1️⃣ Arduino IDE Setup
 
-1. **Clone the repository**
+1. **Install ESP8266 Board Support**
+   - Open Arduino IDE
+   - Go to `File` → `Preferences`
+   - Add to "Additional Board Manager URLs":
+     ```
+     http://arduino.esp8266.com/stable/package_esp8266com_index.json
+     ```
+   - Go to `Tools` → `Board` → `Boards Manager`
+   - Search for "esp8266" and install **esp8266 by ESP8266 Community**
+
+2. **Install Required Library**
+   - Go to `Tools` → `Manage Libraries`
+   - Search for **ArduinoJson** by Benoit Blanchon
+   - Install version **6.21.0** or newer
+
+### 2️⃣ Configure and Upload
+
+1. **Clone or download this repository**
    ```bash
-   git clone https://github.com/khaoullaaa/ESP8266_OTA.git
-   cd ESP8266_OTA
+   git clone https://github.com/khaoullaaa/OTA_Secure_ESP8266-vs2.git
    ```
 
-2. **Configure WiFi Credentials**
+2. **Open the sketch**
+   - Open `OTA_Secure/OTA_Secure.ino` in Arduino IDE
+
+3. **Configure WiFi and GitHub**
    
-   Edit `ESP8266_Firmware/OTA_Secure/OTA_Secure.ino`:
+   Edit these lines at the top of `OTA_Secure.ino`:
    ```cpp
-   const char* ssid = "YOUR_WIFI_SSID";
-   const char* password = "YOUR_WIFI_PASSWORD";
+   const char* WIFI_SSID     = "YOUR_WIFI_SSID";
+   const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
+   
+   const char* GITHUB_USER = "khaoullaaa";  // Your GitHub username
+   const char* GITHUB_REPO = "OTA_Secure_ESP8266-vs2";  // Your repo name
    ```
 
-3. **Configure GitHub Repository**
-   ```cpp
-   const char* githubUser = "YOUR_GITHUB_USERNAME";
-   const char* repoName = "YOUR_REPO_NAME";
-   ```
+4. **Select Board and Port**
+   - `Tools` → `Board` → `ESP8266 Boards` → **NodeMCU 1.0 (ESP-12E Module)**
+   - `Tools` → `Port` → Select your COM port (e.g., COM5)
+   - `Tools` → `Upload Speed` → **921600** (or **115200** if upload fails)
+   - `Tools` → `Flash Size` → **4MB (FS:3MB OTA:~512KB)**
 
-4. **Upload Initial Firmware**
-   - Open `OTA_Secure.ino` in Arduino IDE
-   - Select Board: NodeMCU 1.0 (ESP-12E Module)
-   - Upload to ESP8266
+5. **Upload the sketch**
+   - Click the Upload button (→)
+   - Wait for compilation and upload to complete
 
-### 2️⃣ GitHub Setup
-
-1. **Enable GitHub Actions**
-   - Copy `GitHub_Actions/ota_workflow.yml` to `.github/workflows/`
-   - Commit and push to your repository
-
-2. **Create a Release**
-   ```bash
-   git tag v1.0.0
-   git push origin v1.0.0
-   ```
-
-3. **GitHub Actions will automatically:**
-   - ✅ Compile the firmware
-   - ✅ Generate SHA256 hash
-   - ✅ Create release with firmware
-   - ✅ Update manifest.json
-
-### 3️⃣ OTA Update
-
-1. **Device checks for updates** (automatic every hour)
-2. **Or manually trigger** via web interface
-3. **Firmware downloads and flashes** automatically
-4. **Device reboots** with new version
+6. **Check Serial Monitor**
+   - Open `Tools` → `Serial Monitor`
+   - Set baud rate to **115200**
+   - You'll see the device IP address and status
 
 ---
 
 ## 📁 Project Structure
 
 ```
-ESP8266_OTA/
-├── ESP8266_Firmware/
-│   ├── OTA_Secure/
-│   │   └── OTA_Secure.ino        # Main OTA firmware
-│   ├── Version1_LED/
-│   │   └── Version1_LED.ino      # v1.0.0 - LED control
-│   ├── Version2_Sensor/
-│   │   └── Version2_Sensor.ino   # v2.0.0 - DHT11 sensor
-│   ├── platformio.ini             # PlatformIO config
-│   └── manifest.json              # Firmware metadata
-├── GitHub_Actions/
-│   └── ota_workflow.yml           # CI/CD pipeline
-├── local_ota_server.py            # Local test server
-├── generate_sha256.ps1            # Hash utility
-└── README.md
+OTA_Secure_ESP8266-vs2/
+├── OTA_Secure/
+│   └── OTA_Secure.ino          # Main sketch (Arduino IDE compatible)
+├── .github/
+│   └── workflows/
+│       └── ota_workflow.yml    # CI/CD pipeline (Arduino CLI)
+├── manifest.json               # Updated automatically by CI
+├── AUDIT_REPORT.md             # Security audit findings
+└── README.md                   # This file
 ```
 
 ---
 
-## 🔧 Configuration
+## 🔄 Create Your First OTA Release
 
-### Static IP Address (Optional)
+The included GitHub Actions workflow will automatically:
+- ✅ Compile the firmware using Arduino CLI
+- ✅ Calculate SHA256 hash
+- ✅ Create a GitHub Release with `firmware.bin`
+- ✅ Update `manifest.json` in your repo
 
-```cpp
-IPAddress local_IP(192, 168, 1, 84);
-IPAddress gateway(192, 168, 1, 1);
-IPAddress subnet(255, 255, 255, 0);
-```
-
-### Update GitHub Fingerprint
-
-Get current fingerprint:
-```bash
-openssl s_client -connect raw.githubusercontent.com:443 < /dev/null 2>/dev/null | openssl x509 -fingerprint -noout -in /dev/stdin -sha1
-```
-
-Update in code:
-```cpp
-const char* githubFingerprint = "C6 06 5C F7 ...";
-```
-
----
-
-## 🧪 Local Testing
-
-### Start Local OTA Server
+**To trigger a release:**
 
 ```bash
-cd ESP8266_OTA
-python local_ota_server.py
+git tag v1.0.0
+git push origin v1.0.0
 ```
 
-The server will:
-- ✅ Auto-detect your local IP
-- ✅ Generate self-signed certificate
-- ✅ Calculate firmware SHA256
-- ✅ Serve manifest and firmware
+**GitHub Actions will:**
+1. Compile your sketch with the version number
+2. Generate SHA256 hash
+3. Create a release at `https://github.com/khaoullaaa/OTA_Secure_ESP8266-vs2/releases`
+4. Update `manifest.json` in the main branch
 
-### Update Firmware for Local Testing
-
-```cpp
-// Temporarily disable SSL verification
-client.setInsecure();
-
-// Update manifest URL
-const char* manifestURL = "https://YOUR_LOCAL_IP:8443/manifest.json";
-```
+**Your ESP8266 will:**
+- Automatically check for updates on boot
+- Display "Update available" in the web interface
+- Allow one-click installation
 
 ---
 
-## 📊 Web Interface
+## 🌐 Web Interface
 
-Access the web dashboard:
+Once connected to WiFi, access the web interface:
+
 ```
-http://192.168.1.84/
+http://<device-ip>/
 ```
 
-### Available Endpoints
-
-| Endpoint | Description |
-|----------|-------------|
-| `/` | Main dashboard |
-| `/check` | Check for updates |
-| `/update` | Trigger OTA update |
-| `/reboot` | Restart device |
-| `/info` | System information |
+**You'll see:**
+- Current firmware version
+- Device IP address
+- Update status
+- Three buttons:
+  - **Check Updates** - Manually check for new firmware
+  - **Install Update** - Download and flash (if available)
+  - **Reboot** - Restart the device
 
 ---
 
-## 🔒 Security Best Practices
+## 🔧 How It Works
 
-### ✅ Production Checklist
+1. **Device boots** → connects to WiFi
+2. **Fetches manifest.json** from your GitHub repo:
+   ```
+   https://raw.githubusercontent.com/{user}/{repo}/main/manifest.json
+   ```
+3. **Compares versions** - uses semantic versioning (e.g., 1.0.0 vs 1.1.0)
+4. **If update available** - shows in web interface
+5. **User clicks "Install Update"** (or automatic on boot)
+6. **Downloads firmware** from GitHub Release URL
+7. **Calculates SHA256** while downloading (streaming verification)
+8. **Verifies hash** - if mismatch, aborts and keeps current firmware
+9. **Flashes firmware** - writes to flash memory
+10. **Reboots** - device restarts with new version
 
-- [ ] Enable SSL certificate validation
-- [ ] Use strong WiFi passwords
-- [ ] Update GitHub fingerprint regularly
-- [ ] Verify SHA256 before flashing
-- [ ] Use HTTPS for all connections
-- [ ] Implement rollback mechanism
-- [ ] Monitor update failures
-- [ ] Use signed firmware releases
+---
 
-### ⚠️ Security Warnings
+## 🔐 Security
 
-```cpp
-// ❌ NEVER use in production
-client.setInsecure();
+- **SHA256 verification** - Firmware integrity checked before flashing
+- **HTTPS** - All downloads over encrypted connection  
+- **Streaming verification** - Hash calculated during download (memory efficient)
+- **No hardcoded certificates** - Uses `setInsecure()` but validates via SHA256
+- **Rollback protection** - Only installs newer semantic versions
 
-// ✅ Always verify certificates
-client.setFingerprint(githubFingerprint);
+> **Note:** This uses `client.setInsecure()` which skips TLS certificate verification. Security relies on SHA256 hash verification. For maximum security, implement certificate pinning or CA validation.
+
+---
+
+## 🛠️ Development Workflow
+
+### Making Changes
+
+1. Edit `OTA_Secure/OTA_Secure.ino` in Arduino IDE
+2. Test upload via USB
+3. Commit and push changes to GitHub
+
+### Releasing New Version
+
+1. **Tag a new version:**
+   ```bash
+   git tag v1.1.0
+   git push origin v1.1.0
+   ```
+
+2. **Wait for GitHub Actions** (check the "Actions" tab)
+
+3. **Your devices automatically see the update!**
+
+---
+
+## 📊 Manifest Format
+
+The `manifest.json` is auto-generated by CI:
+
+```json
+{
+  "version": "v1.0.0",
+  "firmware_url": "https://github.com/khaoullaaa/OTA_Secure_ESP8266-vs2/releases/download/v1.0.0/firmware.bin",
+  "sha256": "abc123def456..."
+}
 ```
+
+**Fields:**
+- `version` - Git tag (e.g., v1.0.0)
+- `firmware_url` - Direct download link to firmware.bin
+- `sha256` - SHA256 hash of the firmware binary
 
 ---
 
 ## 🐛 Troubleshooting
 
-### WiFi Connection Failed
-- Check SSID and password
-- Verify WiFi signal strength
-- Device enters AP mode: `ESP8266-OTA-Config` (password: `12345678`)
+### ❌ Upload fails with "Permission Denied"
+- **Close Serial Monitor** in Arduino IDE
+- Close any other programs using the COM port
+- Unplug and replug the USB cable
+- Try a different USB port
 
-### OTA Update Failed
-- Check GitHub fingerprint
-- Verify firmware size < available space
-- Ensure stable WiFi connection
-- Check serial monitor for error codes
+### ❌ Device doesn't connect to WiFi
+- Check SSID and password are correct
+- Ensure **2.4GHz WiFi** (ESP8266 doesn't support 5GHz)
+- Check Serial Monitor for connection errors
+- Move device closer to router
 
-### Certificate Validation Failed
-- Update GitHub fingerprint
-- Temporarily use `client.setInsecure()` for testing
-- Verify system time is correct
+### ❌ OTA update fails
+- Verify `manifest.json` exists in your GitHub repo
+- Check GitHub Release has `firmware.bin` file
+- Verify SHA256 in manifest matches the release
+- Check Serial Monitor for detailed error messages
+- Ensure stable WiFi connection during download
 
-### LED Blink Patterns
+### ❌ "Not enough space" error
+- Firmware binary too large for flash memory
+- Select correct Flash Size in `Tools` menu
+- Remove unnecessary code/libraries to reduce size
 
-| Pattern | Status |
-|---------|--------|
-| Slow (1s) | Normal operation |
-| Medium (500ms) | Update available |
-| Fast (200ms) | OTA in progress |
-| Very Fast (100ms) | WiFi disconnected |
-
----
-
-## 📦 Manifest Schema
-
-```json
-{
-  "version": "2.0.0",
-  "firmware_url": "https://github.com/user/repo/releases/download/v2.0.0/firmware.bin",
-  "sha256": "64_char_hex_hash",
-  "build_date": "2025-12-12",
-  "description": "Version description",
-  "min_version": "1.0.0",
-  "changelog": [
-    "Feature 1",
-    "Feature 2"
-  ]
-}
-```
+### ❌ Compilation errors
+- Ensure **ArduinoJson** library is installed
+- Ensure ESP8266 board package is version 3.0.0+
+- Check that board is set to **NodeMCU 1.0 (ESP-12E)**
 
 ---
 
-## 🚀 Version History
+## 📝 Version Comparison
 
-### v2.0.0 - DHT11 Sensor
-- ✅ Temperature and humidity monitoring
-- ✅ Web dashboard with auto-refresh
-- ✅ Sensor error detection
-- ✅ Improved stability
+The firmware uses **semantic versioning** (MAJOR.MINOR.PATCH):
 
-### v1.0.0 - LED Control
-- ✅ Basic WiFi connectivity
-- ✅ LED blink demonstration
-- ✅ Serial monitoring
-- ✅ Baseline for OTA updates
+```
+v1.2.3
+ │ │ └─ Patch: Bug fixes
+ │ └─── Minor: New features (backward compatible)
+ └───── Major: Breaking changes
+```
+
+**Examples:**
+- `1.0.0` → `1.0.1` ✅ Update (patch)
+- `1.0.0` → `1.1.0` ✅ Update (minor)
+- `1.0.0` → `2.0.0` ✅ Update (major)
+- `1.1.0` → `1.0.0` ❌ No update (older)
 
 ---
 
-## 📝 Development
+## 💡 Tips
 
-### Build with PlatformIO
-
-```bash
-cd ESP8266_Firmware/OTA_Secure
-pio run
-pio run --target upload
-pio device monitor
-```
-
-### Generate SHA256
-
-**Windows PowerShell:**
-```powershell
-.\generate_sha256.ps1 -firmwarePath "firmware.bin"
-```
-
-**Linux/Mac:**
-```bash
-sha256sum firmware.bin
-```
-
----
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create feature branch (`git checkout -b feature/AmazingFeature`)
-3. Commit changes (`git commit -m 'Add AmazingFeature'`)
-4. Push to branch (`git push origin feature/AmazingFeature`)
-5. Open Pull Request
+- **Serial Monitor:** Always check Serial Monitor (115200 baud) for debug info
+- **IP Address:** Note the device IP from Serial Monitor or check your router
+- **WiFi:** Use strong WiFi signal for reliable OTA updates
+- **Testing:** Test new firmware with USB upload before creating OTA release
+- **Versions:** Use semantic versioning for clear update progression
 
 ---
 
 ## 📄 License
 
-This project is open source and available under the MIT License.
+This project is open source and available for educational purposes.
+
+---
+
+## 🙏 Credits
+
+Built with:
+- **ESP8266 Arduino Core** - ESP8266 WiFi support
+- **ArduinoJson** by Benoit Blanchon - JSON parsing
+- **Arduino CLI** - CI/CD builds
+- **BearSSL** - SHA256 verification (included in ESP8266 core)
 
 ---
 
@@ -330,26 +300,8 @@ This project is open source and available under the MIT License.
 
 **Khaoula**
 - GitHub: [@khaoullaaa](https://github.com/khaoullaaa)
-- Repository: [ESP8266_OTA](https://github.com/khaoullaaa/ESP8266_OTA)
+- Repository: [OTA_Secure_ESP8266-vs2](https://github.com/khaoullaaa/OTA_Secure_ESP8266-vs2)
 
 ---
 
-## 🙏 Acknowledgments
-
-- ESP8266 Community
-- Arduino Core for ESP8266
-- GitHub Actions
-- ArduinoJson Library
-
----
-
-## 📞 Support
-
-For issues and questions:
-1. Check the [Troubleshooting](#-troubleshooting) section
-2. Review closed issues on GitHub
-3. Open a new issue with detailed information
-
----
-
-**⭐ If this project helped you, please give it a star!**
+**⭐ If this helped you, please star the repo!**

@@ -23,6 +23,7 @@ __pycache__/
 .Python
 env/
 venv/
+.venv/
 *.egg-info/
 
 # IDE
@@ -49,3 +50,7 @@ logs/
 *.tmp
 *.temp
 .cache/
+
+# Backup files
+*.old.*
+*.bak
