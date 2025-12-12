@@ -22,8 +22,8 @@
 #include <Updater.h>
 
 // ============ CONFIGURATION - EDIT THESE ============
-const char* WIFI_SSID     = "YOUR_WIFI_SSID";
-const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
+const char* WIFI_SSID     = "TOPNET_2FB0";
+const char* WIFI_PASSWORD = "3m3smnb68l";
 
 const char* GITHUB_USER = "khaoullaaa";
 const char* GITHUB_REPO = "OTA_Secure_ESP8266-vs2";
@@ -391,34 +391,42 @@ void setup() {
         Serial.println("Will retry in loop...");
     }
     
-    // Web server routes
-    server.on("/", handleRoot);
-    server.on("/check", handleCheck);
-    server.on("/update", handleUpdate);
-    server.on("/reboot", handleReboot);
-    server.begin();
-    
-    Serial.println("\nWeb server started");
-    Serial.printf("Open: http://%s/\n", WiFi.localIP().toString().c_str());
-    
-    // Check for updates on boot
+    // Check for updates on boot and auto-install if available
     if (WiFi.status() == WL_CONNECTED) {
-        checkForUpdate();
+        if (checkForUpdate()) {
+            Serial.println("[OTA] New version found! Starting automatic update...");
+            performUpdate();
+        }
     }
+    
+    Serial.println("\n[READY] Device ready. Will check for updates every 30 minutes.");
 }
 
 // ============ LOOP ============
 void loop() {
-    server.handleClient();
-    
     // Reconnect WiFi if needed
     static unsigned long lastWifiCheck = 0;
     if (millis() - lastWifiCheck > 30000) {
         if (WiFi.status() != WL_CONNECTED) {
-            Serial.println("WiFi reconnecting...");
+            Serial.println("[WiFi] Reconnecting...");
             WiFi.reconnect();
         }
         lastWifiCheck = millis();
+    }
+    
+    // Check for updates every 30 minutes (1800000 ms)
+    static unsigned long lastUpdateCheck = 0;
+    if (millis() - lastUpdateCheck > 1800000 || lastUpdateCheck == 0) {
+        if (WiFi.status() == WL_CONNECTED) {
+            Serial.println("\n[OTA] Periodic update check...");
+            if (checkForUpdate()) {
+                Serial.println("[OTA] New version available! Auto-installing...");
+                performUpdate();
+                // If we get here, update failed
+                Serial.println("[OTA] Update failed, will retry in 30 minutes");
+            }
+        }
+        lastUpdateCheck = millis();
     }
     
     yield();
