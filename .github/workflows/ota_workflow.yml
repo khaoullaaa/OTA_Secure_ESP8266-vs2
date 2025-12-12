@@ -19,12 +19,24 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Get version from VERSION file
+      - name: Get version from Arduino sketch
         id: version
         run: |
-          VERSION=$(cat VERSION)
-          echo "VERSION=v${VERSION}" >> $GITHUB_OUTPUT
-          echo "Building version: v${VERSION}"
+          # Extract version from sketch (looks for #define FW_VERSION_STR "vX.Y.Z")
+          VERSION=$(grep '#define FW_VERSION_STR' OTA_Secure/OTA_Secure.ino | sed 's/.*"\(.*\)".*/\1/')
+          echo "Version from sketch: $VERSION"
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          
+          # Create and push the tag
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag $VERSION -m "Release $VERSION" || echo "Tag already exists"
+          git push origin $VERSION || echo "Tag already pushed"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
 
       - name: Setup Arduino CLI
         uses: arduino/setup-arduino-cli@v2
@@ -36,10 +48,10 @@ jobs:
           arduino-cli core install esp8266:esp8266
           arduino-cli lib install ArduinoJson
 
-      - name: Set version in sketch
+      - name: Display version
         run: |
           VERSION="${{ steps.version.outputs.VERSION }}"
-          sed -i "s/#define FW_VERSION_STR \"v0.0.0\"/#define FW_VERSION_STR \"${VERSION}\"/" OTA_Secure/OTA_Secure.ino
+          echo "Building firmware version: $VERSION"
 
       - name: Compile firmware
         run: |
@@ -66,29 +78,21 @@ jobs:
           cd firmware_build
           SHA256=$(sha256sum firmware.bin | awk '{print $1}')
           echo "SHA256=$SHA256" >> $GITHUB_ENV
+          echo "$SHA256" > sha256.txt
 
-      - name: Create manifests
+      - name: Create release manifest artifact
         run: |
           VERSION="${{ steps.version.outputs.VERSION }}"
-          mkdir -p firmware_build
-          cat > firmware_build/manifest.json << EOF
+          cd firmware_build
+          cat > manifest.json << EOF
           {
             "version": "${VERSION}",
             "firmware_url": "https://github.com/${{ github.repository }}/releases/download/${VERSION}/firmware.bin",
             "sha256": "${{ env.SHA256 }}"
           }
           EOF
-          cp firmware_build/manifest.json manifest.json
 
-      - name: Create git tag
-        run: |
-          VERSION="${{ steps.version.outputs.VERSION }}"
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag -a ${VERSION} -m "Release ${VERSION}" 2>/dev/null || echo "Tag exists"
-          git push origin ${VERSION} 2>/dev/null || echo "Tag already pushed"
-
-      - name: Update manifest in main
+      - name: Commit updated manifest to main
         run: |
           VERSION="${{ steps.version.outputs.VERSION }}"
           git fetch origin main
@@ -103,21 +107,23 @@ jobs:
           git add manifest.json
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git commit -m "chore: update manifest for ${VERSION}" || true
-          git push origin main
+          git commit -m "chore: update manifest for ${VERSION} [skip ci]" || exit 0
+          git push origin HEAD:main
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.VERSION }}
+          name: Release ${{ steps.version.outputs.VERSION }}
           files: |
             firmware_build/firmware.bin
             firmware_build/manifest.json
+            firmware_build/sha256.txt
           generate_release_notes: true
           draft: false
           prerelease: false
 
-      - name: Upload artifacts
+      - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: firmware-build
