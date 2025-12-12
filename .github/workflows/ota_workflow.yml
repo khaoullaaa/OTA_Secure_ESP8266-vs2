@@ -34,14 +34,17 @@ jobs:
           arduino-cli core install esp8266:esp8266
           arduino-cli lib install ArduinoJson
 
+      - name: Set version in sketch
+        run: |
+          VERSION="${{ github.ref_name }}"
+          sed -i "s/#define FW_VERSION_STR \"v0.0.0\"/#define FW_VERSION_STR \"${VERSION}\"/" OTA_Secure/OTA_Secure.ino
+
       - name: Compile firmware
         run: |
           mkdir -p firmware_build
-          VERSION="${{ github.ref_name }}"
           arduino-cli compile \
             --fqbn esp8266:esp8266:nodemcuv2 \
             --output-dir firmware_build \
-            --build-property "compiler.cpp.extra_flags=\"-DFW_VERSION_STR=\\\"${VERSION}\\\"\"" \
             OTA_Secure
 
       - name: Normalize firmware name
