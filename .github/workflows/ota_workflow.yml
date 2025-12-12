@@ -1,4 +1,4 @@
-name: Build and Release Firmware
+﻿name: Build and Release Firmware
 
 on:
   push:
@@ -19,36 +19,12 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Generate version tag
+      - name: Get version from VERSION file
         id: version
         run: |
-          # Get the latest tag, or start at v1.0.0
-          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
-          echo "Latest tag: $LATEST_TAG"
-          
-          # Extract version numbers
-          VERSION=${LATEST_TAG#v}
-          MAJOR=$(echo $VERSION | cut -d. -f1)
-          MINOR=$(echo $VERSION | cut -d. -f2)
-          PATCH=$(echo $VERSION | cut -d. -f3)
-          
-          # Auto-increment patch version
-          PATCH=$((PATCH + 1))
-          NEW_VERSION="v${MAJOR}.${MINOR}.${PATCH}"
-          
-          echo "New version: $NEW_VERSION"
-          echo "VERSION=$NEW_VERSION" >> $GITHUB_OUTPUT
-          
-          # Create and push the tag
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag $NEW_VERSION
-          git push origin $NEW_VERSION
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
+          VERSION=$(cat VERSION)
+          echo "VERSION=v${VERSION}" >> $GITHUB_OUTPUT
+          echo "Building version: v${VERSION}"
 
       - name: Setup Arduino CLI
         uses: arduino/setup-arduino-cli@v2
@@ -64,7 +40,6 @@ jobs:
         run: |
           VERSION="${{ steps.version.outputs.VERSION }}"
           sed -i "s/#define FW_VERSION_STR \"v0.0.0\"/#define FW_VERSION_STR \"${VERSION}\"/" OTA_Secure/OTA_Secure.ino
-          echo "Building version: $VERSION"
 
       - name: Compile firmware
         run: |
@@ -91,21 +66,29 @@ jobs:
           cd firmware_build
           SHA256=$(sha256sum firmware.bin | awk '{print $1}')
           echo "SHA256=$SHA256" >> $GITHUB_ENV
-          echo "$SHA256" > sha256.txt
 
-      - name: Create release manifest artifact
+      - name: Create manifests
         run: |
           VERSION="${{ steps.version.outputs.VERSION }}"
-          cd firmware_build
-          cat > manifest.json << EOF
+          mkdir -p firmware_build
+          cat > firmware_build/manifest.json << EOF
           {
             "version": "${VERSION}",
             "firmware_url": "https://github.com/${{ github.repository }}/releases/download/${VERSION}/firmware.bin",
             "sha256": "${{ env.SHA256 }}"
           }
           EOF
+          cp firmware_build/manifest.json manifest.json
 
-      - name: Commit updated manifest to main
+      - name: Create git tag
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a ${VERSION} -m "Release ${VERSION}" 2>/dev/null || echo "Tag exists"
+          git push origin ${VERSION} 2>/dev/null || echo "Tag already pushed"
+
+      - name: Update manifest in main
         run: |
           VERSION="${{ steps.version.outputs.VERSION }}"
           git fetch origin main
@@ -120,23 +103,21 @@ jobs:
           git add manifest.json
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git commit -m "chore: update manifest for ${VERSION} [skip ci]" || exit 0
-          git push origin HEAD:main
+          git commit -m "chore: update manifest for ${VERSION}" || true
+          git push origin main
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.VERSION }}
-          name: Release ${{ steps.version.outputs.VERSION }}
           files: |
             firmware_build/firmware.bin
             firmware_build/manifest.json
-            firmware_build/sha256.txt
           generate_release_notes: true
           draft: false
           prerelease: false
 
-      - name: Upload build artifacts
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: firmware-build
