@@ -29,7 +29,7 @@ const char* GITHUB_REPO = "OTA_Secure_ESP8266-vs2";
 
 // Firmware version (set automatically in CI via -DFW_VERSION_STR="vX.Y.Z")
 #ifndef FW_VERSION_STR
-#define FW_VERSION_STR "v2.0.0"
+#define FW_VERSION_STR "v3.0.0"
 #endif
 static const char* FW_VERSION = FW_VERSION_STR;
 // ====================================================
