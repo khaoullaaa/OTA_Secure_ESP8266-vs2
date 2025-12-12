@@ -1,21 +1,20 @@
 /*
- * SIMPLE SECURE OTA - ESP8266
+ * AUTOMATIC SECURE OTA - ESP8266
  * 
  * Features:
+ * - Automatically checks for updates every 30 minutes
  * - Downloads firmware from GitHub Releases
  * - Verifies SHA256 before flashing
- * - Simple web interface to trigger updates
- * - Auto-check on boot
+ * - Auto-installs new versions
  * 
  * Setup:
  * 1. Set your WiFi credentials below
  * 2. Set your GitHub username and repo name
  * 3. Upload this sketch
- * 4. Create GitHub releases with firmware.bin
+ * 4. Device will auto-update when you create new GitHub releases
  */
 
 #include <ESP8266WiFi.h>
-#include <ESP8266WebServer.h>
 #include <ESP8266HTTPClient.h>
 #include <WiFiClientSecure.h>
 #include <ArduinoJson.h>
@@ -30,7 +29,7 @@ const char* GITHUB_REPO = "OTA_Secure_ESP8266-vs2";
 
 // Firmware version (set automatically in CI via -DFW_VERSION_STR="vX.Y.Z")
 #ifndef FW_VERSION_STR
-#define FW_VERSION_STR "v0.0.0"
+#define FW_VERSION_STR "v1.0.0"
 #endif
 static const char* FW_VERSION = FW_VERSION_STR;
 // ====================================================
@@ -41,8 +40,6 @@ String currentVersion = FW_VERSION;
 String latestVersion = "";
 String firmwareUrl = "";
 String expectedHash = "";
-
-ESP8266WebServer server(80);
 
 // ============ SHA256 HELPERS ============
 #include <bearssl/bearssl_hash.h>
@@ -137,26 +134,38 @@ bool checkForUpdate() {
     expectedHash = doc["sha256"] | "";
     expectedHash.toLowerCase();
     
-    Serial.printf("[OTA] Current: %s, Latest: %s\n", currentVersion.c_str(), latestVersion.c_str());
+    Serial.println("[SECURITY] ============================================");
+    Serial.printf("[SECURITY] Manifest Version: %s\n", latestVersion.c_str());
+    Serial.printf("[SECURITY] Firmware URL: %s\n", firmwareUrl.c_str());
+    Serial.printf("[SECURITY] Expected SHA256: %s\n", expectedHash.c_str());
+    Serial.println("[SECURITY] ============================================");
+    Serial.printf("[VERSION] Current: %s, Latest: %s\n", currentVersion.c_str(), latestVersion.c_str());
     
-    // Validate
+    // Validate manifest data
     if (latestVersion.length() == 0 || firmwareUrl.length() == 0) {
-        Serial.println("[OTA] Invalid manifest data");
+        Serial.println("[SECURITY] ❌ FAILED - Invalid manifest data");
         return false;
     }
+    Serial.println("[SECURITY] ✓ Manifest structure valid");
     
+    // Validate SHA256 format
     if (expectedHash.length() != 64) {
-        Serial.println("[OTA] Invalid SHA256 in manifest");
+        Serial.println("[SECURITY] ❌ FAILED - Invalid SHA256 format (must be 64 hex chars)");
         return false;
     }
+    Serial.println("[SECURITY] ✓ SHA256 format valid (64 hex characters)");
     
     // Compare versions
-    if (compareVersions(latestVersion, currentVersion) > 0) {
-        Serial.println("[OTA] Update available!");
+    int versionCmp = compareVersions(latestVersion, currentVersion);
+    Serial.printf("[VERSION] Comparison result: %d (>0 = update available)\n", versionCmp);
+    
+    if (versionCmp > 0) {
+        Serial.println("[OTA] ✓ UPDATE AVAILABLE!");
+        Serial.println("[SECURITY] Manifest verification PASSED - ready to download");
         return true;
     }
     
-    Serial.println("[OTA] Already up to date");
+    Serial.println("[OTA] ✓ Already up to date");
     return false;
 }
 
@@ -190,31 +199,39 @@ bool performUpdate() {
     
     int contentLength = http.getSize();
     if (contentLength <= 0) {
-        Serial.println("[OTA] Invalid content length");
+        Serial.println("[SECURITY] ❌ FAILED - Invalid content length");
         http.end();
         return false;
     }
     
-    Serial.printf("[OTA] Firmware size: %d bytes\n", contentLength);
+    Serial.printf("[DOWNLOAD] Firmware size: %d bytes (%.2f KB)\n", contentLength, contentLength / 1024.0);
     
     // Check if we have space
-    if (contentLength > (int)ESP.getFreeSketchSpace()) {
-        Serial.println("[OTA] Not enough space");
+    int freeSpace = ESP.getFreeSketchSpace();
+    Serial.printf("[SECURITY] Available flash space: %d bytes (%.2f KB)\n", freeSpace, freeSpace / 1024.0);
+    
+    if (contentLength > freeSpace) {
+        Serial.println("[SECURITY] ❌ FAILED - Not enough flash space");
         http.end();
         return false;
     }
+    Serial.println("[SECURITY] ✓ Flash space check PASSED");
     
     // Start update
+    Serial.println("[FLASH] Preparing flash memory for update...");
     if (!Update.begin(contentLength)) {
-        Serial.println("[OTA] Update.begin failed");
+        Serial.println("[SECURITY] ❌ FAILED - Update.begin failed");
         http.end();
         return false;
     }
+    Serial.println("[SECURITY] ✓ Flash preparation successful");
     
     // Download and hash simultaneously
+    Serial.println("[SECURITY] Starting SHA256 streaming verification...");
     WiFiClient* stream = http.getStreamPtr();
     br_sha256_context sha256ctx;
     br_sha256_init(&sha256ctx);
+    Serial.println("[SECURITY] ✓ SHA256 context initialized");
     
     uint8_t buf[512];
     size_t written = 0;
@@ -254,107 +271,43 @@ bool performUpdate() {
     http.end();
     
     // Verify hash BEFORE committing
+    Serial.println("\n[SECURITY] ============================================");
+    Serial.println("[SECURITY] FINAL VERIFICATION - Computing SHA256...");
     uint8_t hash[32];
     br_sha256_out(&sha256ctx, hash);
     String actualHash = sha256ToString(hash);
     
-    Serial.printf("[OTA] Expected: %s\n", expectedHash.c_str());
-    Serial.printf("[OTA] Actual:   %s\n", actualHash.c_str());
+    Serial.println("[SECURITY] SHA256 COMPARISON:");
+    Serial.printf("[SECURITY]   Expected: %s\n", expectedHash.c_str());
+    Serial.printf("[SECURITY]   Computed: %s\n", actualHash.c_str());
     
     if (actualHash != expectedHash) {
-        Serial.println("[OTA] SHA256 MISMATCH - Aborting!");
+        Serial.println("[SECURITY] ❌ CRITICAL FAILURE - SHA256 MISMATCH!");
+        Serial.println("[SECURITY] Firmware integrity check FAILED");
+        Serial.println("[SECURITY] Aborting update - keeping current firmware");
         Update.end(false);
         return false;
     }
     
-    Serial.println("[OTA] SHA256 verified OK");
+    Serial.println("[SECURITY] ✓✓✓ SHA256 MATCH - FIRMWARE VERIFIED! ✓✓✓");
+    Serial.println("[SECURITY] ============================================");
     
-    // Finalize
+    // Finalize - commit to flash
+    Serial.println("[FLASH] Committing verified firmware to flash memory...");
     if (!Update.end(true)) {
-        Serial.println("[OTA] Update.end failed");
+        Serial.println("[SECURITY] ❌ FAILED - Could not finalize update");
         return false;
     }
     
-    Serial.println("[OTA] Update successful! Rebooting...");
-    delay(1000);
+    Serial.println("[SECURITY] ✓ Firmware committed successfully");
+    Serial.println("\n========================================");
+    Serial.println("   OTA UPDATE SUCCESSFUL!");
+    Serial.println("   All security checks PASSED");
+    Serial.println("   Rebooting in 3 seconds...");
+    Serial.println("========================================\n");
+    delay(3000);
     ESP.restart();
     return true;
-}
-
-// ============ WEB PAGE ============
-String getWebPage() {
-    bool updateAvailable = (latestVersion.length() > 0 && compareVersions(latestVersion, currentVersion) > 0);
-    
-    String html = R"(<!DOCTYPE html>
-<html>
-<head>
-    <meta charset='UTF-8'>
-    <meta name='viewport' content='width=device-width, initial-scale=1'>
-    <title>ESP8266 OTA</title>
-    <style>
-        body { font-family: Arial; max-width: 400px; margin: 40px auto; padding: 20px; background: #f5f5f5; }
-        .card { background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-        h1 { color: #333; margin-top: 0; }
-        .info { margin: 15px 0; padding: 10px; background: #e8f5e9; border-radius: 5px; }
-        .update { background: #fff3e0; }
-        button { width: 100%; padding: 12px; margin: 5px 0; border: none; border-radius: 5px; cursor: pointer; font-size: 16px; }
-        .btn-check { background: #2196F3; color: white; }
-        .btn-update { background: #4CAF50; color: white; }
-        .btn-reboot { background: #ff9800; color: white; }
-    </style>
-</head>
-<body>
-    <div class='card'>
-        <h1>ESP8266 OTA</h1>
-        <div class='info'>
-            <strong>Current:</strong> v)" + currentVersion + R"(<br>
-            <strong>IP:</strong> )" + WiFi.localIP().toString() + R"(
-        </div>)";
-    
-    if (updateAvailable) {
-        html += R"(<div class='info update'><strong>Update available:</strong> v)" + latestVersion + R"(</div>)";
-    }
-    
-    html += R"(
-        <button class='btn-check' onclick="location.href='/check'">Check Updates</button>)";
-    
-    if (updateAvailable) {
-        html += R"(<button class='btn-update' onclick="if(confirm('Install update?')) location.href='/update'">Install Update</button>)";
-    }
-    
-    html += R"(
-        <button class='btn-reboot' onclick="if(confirm('Reboot?')) location.href='/reboot'">Reboot</button>
-    </div>
-</body>
-</html>)";
-    
-    return html;
-}
-
-// ============ WEB HANDLERS ============
-void handleRoot() {
-    server.send(200, "text/html", getWebPage());
-}
-
-void handleCheck() {
-    checkForUpdate();
-    server.sendHeader("Location", "/");
-    server.send(302);
-}
-
-void handleUpdate() {
-    server.send(200, "text/html", "<html><body><h1>Updating...</h1><p>Please wait. Device will reboot.</p></body></html>");
-    delay(100);
-    performUpdate();
-    // If we get here, update failed
-    server.sendHeader("Location", "/");
-    server.send(302);
-}
-
-void handleReboot() {
-    server.send(200, "text/html", "<html><body><h1>Rebooting...</h1></body></html>");
-    delay(1000);
-    ESP.restart();
 }
 
 // ============ SETUP ============
@@ -393,13 +346,17 @@ void setup() {
     
     // Check for updates on boot and auto-install if available
     if (WiFi.status() == WL_CONNECTED) {
+        Serial.println("\n[BOOT] Performing initial update check...");
         if (checkForUpdate()) {
-            Serial.println("[OTA] New version found! Starting automatic update...");
+            Serial.println("[OTA] ✓ New version found! Starting automatic update...");
             performUpdate();
         }
     }
     
-    Serial.println("\n[READY] Device ready. Will check for updates every 30 minutes.");
+    Serial.println("\n========================================");
+    Serial.println("   DEVICE READY");
+    Serial.println("   Update check interval: 5 seconds (TEST MODE)");
+    Serial.println("========================================\n");
 }
 
 // ============ LOOP ============
@@ -414,9 +371,9 @@ void loop() {
         lastWifiCheck = millis();
     }
     
-    // Check for updates every 30 minutes (1800000 ms)
+    // Check for updates every 5 seconds (for testing - change to 1800000 for 30 min)
     static unsigned long lastUpdateCheck = 0;
-    if (millis() - lastUpdateCheck > 1800000 || lastUpdateCheck == 0) {
+    if (millis() - lastUpdateCheck > 5000 || lastUpdateCheck == 0) {
         if (WiFi.status() == WL_CONNECTED) {
             Serial.println("\n[OTA] Periodic update check...");
             if (checkForUpdate()) {
