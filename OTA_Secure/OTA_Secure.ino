@@ -22,8 +22,8 @@
 #include <Updater.h>
 
 // ============ CONFIGURATION - EDIT THESE ============
-const char* WIFI_SSID     = "TOPNET_2FB0";
-const char* WIFI_PASSWORD = "3m3smnb68l";
+const char* WIFI_SSID     = "YOUR_WIFI_SSID";
+const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
 
 const char* GITHUB_USER = "khaoullaaa";
 const char* GITHUB_REPO = "OTA_Secure_ESP8266-vs2";
