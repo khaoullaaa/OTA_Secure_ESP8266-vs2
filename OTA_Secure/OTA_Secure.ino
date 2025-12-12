@@ -40,7 +40,7 @@ const uint8_t AES_KEY[32] = {
 
 // Firmware version (set automatically in CI via -DFW_VERSION_STR="vX.Y.Z")
 #ifndef FW_VERSION_STR
-#define FW_VERSION_STR "v6.0.0"
+#define FW_VERSION_STR "v7.0.0"
 #endif
 static const char* FW_VERSION = FW_VERSION_STR;
 // ====================================================
@@ -187,13 +187,7 @@ bool checkForUpdate() {
     return false;
 }
 
-// ============ AES DECRYPTION HELPER ============
-void aesDecryptBlock(br_aes_ct_ctr_keys *ctx, uint8_t *data, size_t len) {
-    // Decrypt in-place using AES-256-CTR mode
-    br_aes_ct_ctr_run(ctx, nullptr, 0, data, len);
-}
-
-// ============ PERFORM OTA UPDATE WITH AES DECRYPTION ============
+// ============ PERFORM OTA UPDATE WITH AES-256-CBC DECRYPTION ============
 bool performUpdate() {
     if (firmwareUrl.length() == 0 || expectedHash.length() == 0) {
         Serial.println("[OTA] No update info available");
@@ -221,83 +215,69 @@ bool performUpdate() {
         return false;
     }
     
-    int encryptedSize = http.getSize();
-    if (encryptedSize <= 0) {
+    int totalSize = http.getSize();
+    if (totalSize <= 20) {  // Minimum: 4 (size) + 16 (IV) + some data
         Serial.println("[SECURITY] ❌ FAILED - Invalid content length");
         http.end();
         return false;
     }
     
-    // Account for IV (16 bytes) at the beginning
-    int decryptedSize = encryptedSize - 16;
+    Serial.printf("[DOWNLOAD] Total encrypted file size: %d bytes\n", totalSize);
     
-    Serial.printf("[DOWNLOAD] Encrypted size: %d bytes (%.2f KB)\n", encryptedSize, encryptedSize / 1024.0);
-    Serial.printf("[DOWNLOAD] Decrypted size: %d bytes (%.2f KB)\n", decryptedSize, decryptedSize / 1024.0);
-    
-    // Check if we have space
-    int freeSpace = ESP.getFreeSketchSpace();
-    Serial.printf("[SECURITY] Available flash space: %d bytes (%.2f KB)\n", freeSpace, freeSpace / 1024.0);
-    
-    if (decryptedSize > freeSpace) {
-        Serial.println("[SECURITY] ❌ FAILED - Not enough flash space");
-        http.end();
-        return false;
-    }
-    Serial.println("[SECURITY] ✓ Flash space check PASSED");
-    
-    // Start update
-    Serial.println("[FLASH] Preparing flash memory for update...");
-    if (!Update.begin(decryptedSize)) {
-        Serial.println("[SECURITY] ❌ FAILED - Update.begin failed");
-        http.end();
-        return false;
-    }
-    Serial.println("[SECURITY] ✓ Flash preparation successful");
-    
-    // Initialize AES decryption
-    Serial.println("[AES] Initializing AES-256-CTR decryption...");
     WiFiClient* stream = http.getStreamPtr();
     
-    // Read IV (first 16 bytes): 12-byte nonce + 4-byte counter (big-endian)
-    uint8_t iv[16];
-    size_t ivRead = 0;
-    unsigned long ivTimeout = millis() + 10000;
-    while (ivRead < 16 && millis() < ivTimeout) {
+    // ===== Read header: Original Size (4 bytes LE) + IV (16 bytes) =====
+    uint8_t header[20];
+    size_t headerRead = 0;
+    unsigned long timeout = millis() + 10000;
+    while (headerRead < 20 && millis() < timeout) {
         if (stream->available()) {
-            ivRead += stream->readBytes(iv + ivRead, 16 - ivRead);
+            headerRead += stream->readBytes(header + headerRead, 20 - headerRead);
         }
         yield();
     }
     
-    if (ivRead < 16) {
-        Serial.println("[AES] ❌ FAILED - Could not read IV");
-        Update.end(false);
+    if (headerRead < 20) {
+        Serial.println("[AES] ❌ FAILED - Could not read header");
         http.end();
         return false;
     }
     
+    // Extract original firmware size (4 bytes little-endian)
+    uint32_t originalSize = header[0] | (header[1] << 8) | (header[2] << 16) | (header[3] << 24);
+    
+    // Extract IV (16 bytes)
+    uint8_t iv[16];
+    memcpy(iv, header + 4, 16);
+    
+    Serial.printf("[AES] Original firmware size: %u bytes\n", originalSize);
     Serial.print("[AES] IV (hex): ");
     for (int i = 0; i < 16; i++) {
         if (iv[i] < 0x10) Serial.print("0");
         Serial.print(iv[i], HEX);
     }
     Serial.println();
-    Serial.print("[AES] Nonce (12 bytes): ");
-    for (int i = 0; i < 12; i++) {
-        if (iv[i] < 0x10) Serial.print("0");
-        Serial.print(iv[i], HEX);
+    
+    // Encrypted data size (total - 4 size bytes - 16 IV bytes)
+    int encryptedDataSize = totalSize - 20;
+    Serial.printf("[DOWNLOAD] Encrypted data size: %d bytes\n", encryptedDataSize);
+    
+    // Check if we have space
+    int freeSpace = ESP.getFreeSketchSpace();
+    Serial.printf("[SECURITY] Available flash space: %d bytes\n", freeSpace);
+    
+    if ((int)originalSize > freeSpace) {
+        Serial.println("[SECURITY] ❌ FAILED - Not enough flash space");
+        http.end();
+        return false;
     }
-    Serial.println();
+    Serial.println("[SECURITY] ✓ Flash space check PASSED");
     
-    // Extract initial counter from IV (last 4 bytes, big-endian)
-    uint32_t ctrValue = ((uint32_t)iv[12] << 24) | ((uint32_t)iv[13] << 16) | 
-                        ((uint32_t)iv[14] << 8) | (uint32_t)iv[15];
-    Serial.printf("[AES] Initial counter value: %u\n", ctrValue);
-    
-    // Initialize AES CTR mode
-    br_aes_ct_ctr_keys aesCtx;
-    br_aes_ct_ctr_init(&aesCtx, AES_KEY, 32);
-    Serial.println("[AES] ✓ AES-256 context initialized");
+    // Initialize AES-CBC decryption context
+    Serial.println("[AES] Initializing AES-256-CBC decryption...");
+    br_aes_ct_cbcdec_keys aesCtx;
+    br_aes_ct_cbcdec_init(&aesCtx, AES_KEY, 32);
+    Serial.println("[AES] ✓ AES-256-CBC context initialized");
     
     // Initialize SHA256 for decrypted data
     Serial.println("[SECURITY] Starting SHA256 streaming verification...");
@@ -305,45 +285,72 @@ bool performUpdate() {
     br_sha256_init(&sha256ctx);
     Serial.println("[SECURITY] ✓ SHA256 context initialized");
     
+    // Start flash update
+    Serial.println("[FLASH] Preparing flash memory for update...");
+    if (!Update.begin(originalSize)) {
+        Serial.println("[SECURITY] ❌ FAILED - Update.begin failed");
+        http.end();
+        return false;
+    }
+    Serial.println("[SECURITY] ✓ Flash preparation successful");
+    
+    // Download, decrypt, and flash in 512-byte blocks (must be multiple of 16)
     uint8_t buf[512];
-    size_t downloaded = 16; // Already read IV
+    size_t downloaded = 0;
     size_t written = 0;
     unsigned long lastActivity = millis();
     
-    // Track CTR counter position (starts after IV read)
-    uint32_t ctr = ctrValue;
-    
-    while (downloaded < (size_t)encryptedSize) {
+    while (downloaded < (size_t)encryptedDataSize) {
         size_t available = stream->available();
         if (available) {
             lastActivity = millis();
-            size_t toRead = min(available, sizeof(buf));
-            size_t bytesRead = stream->readBytes(buf, toRead);
             
-            if (bytesRead > 0) {
-                // Decrypt block - br_aes_ct_ctr_run returns new counter value
-                ctr = br_aes_ct_ctr_run(&aesCtx, iv, ctr, buf, bytesRead);
+            // Read a multiple of 16 bytes (AES block size)
+            size_t toRead = min(available, sizeof(buf));
+            toRead = (toRead / 16) * 16;  // Round down to 16-byte boundary
+            if (toRead == 0) toRead = 16; // Need at least one block
+            
+            // Make sure we don't read past encrypted data
+            if (downloaded + toRead > (size_t)encryptedDataSize) {
+                toRead = encryptedDataSize - downloaded;
+            }
+            
+            if (toRead >= 16) {
+                size_t bytesRead = stream->readBytes(buf, toRead);
                 
-                // Update hash with DECRYPTED data
-                br_sha256_update(&sha256ctx, buf, bytesRead);
-                
-                // Write decrypted data to flash
-                if (Update.write(buf, bytesRead) != bytesRead) {
-                    Serial.println("[OTA] Write failed");
-                    Update.end(false);
-                    http.end();
-                    return false;
-                }
-                
-                downloaded += bytesRead;
-                written += bytesRead;
-                
-                // Progress
-                int percent = (written * 100) / decryptedSize;
-                static int lastPercent = -1;
-                if (percent != lastPercent && percent % 10 == 0) {
-                    Serial.printf("[AES/OTA] Decrypted & written: %d%%\n", percent);
-                    lastPercent = percent;
+                if (bytesRead > 0 && bytesRead % 16 == 0) {
+                    // Decrypt in-place using CBC mode
+                    br_aes_ct_cbcdec_run(&aesCtx, iv, buf, bytesRead);
+                    
+                    // Calculate how much of this block is actual firmware data
+                    size_t dataToWrite = bytesRead;
+                    if (written + dataToWrite > originalSize) {
+                        dataToWrite = originalSize - written;  // Don't write padding
+                    }
+                    
+                    if (dataToWrite > 0) {
+                        // Update hash with DECRYPTED data (excluding padding)
+                        br_sha256_update(&sha256ctx, buf, dataToWrite);
+                        
+                        // Write decrypted data to flash
+                        if (Update.write(buf, dataToWrite) != dataToWrite) {
+                            Serial.println("[OTA] Write failed");
+                            Update.end(false);
+                            http.end();
+                            return false;
+                        }
+                        written += dataToWrite;
+                    }
+                    
+                    downloaded += bytesRead;
+                    
+                    // Progress
+                    int percent = (written * 100) / originalSize;
+                    static int lastPercent = -1;
+                    if (percent != lastPercent && percent % 10 == 0) {
+                        Serial.printf("[AES/OTA] Decrypted & written: %d%%\n", percent);
+                        lastPercent = percent;
+                    }
                 }
             }
         } else {
@@ -358,7 +365,7 @@ bool performUpdate() {
         yield();
     }
     
-    Serial.printf("[AES] ✓ Decryption complete - %u bytes processed\n", written);
+    Serial.printf("[AES] ✓ Decryption complete - %u bytes written\n", written);
     
     http.end();
     

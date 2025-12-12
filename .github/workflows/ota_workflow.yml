@@ -108,7 +108,7 @@ jobs:
             "firmware_url": "https://github.com/${{ github.repository }}/releases/download/${VERSION}/firmware.bin",
             "sha256": "${{ env.SHA256 }}",
             "encrypted": true,
-            "encryption": "AES-256-CTR"
+            "encryption": "AES-256-CBC"
           }
           EOF
 
@@ -127,7 +127,7 @@ jobs:
             "firmware_url": "https://github.com/${{ github.repository }}/releases/download/${VERSION}/firmware.bin",
             "sha256": "${{ env.SHA256 }}",
             "encrypted": true,
-            "encryption": "AES-256-CTR"
+            "encryption": "AES-256-CBC"
           }
           EOF
           git add manifest.json
