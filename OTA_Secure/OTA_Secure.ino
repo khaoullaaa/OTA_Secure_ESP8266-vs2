@@ -40,7 +40,7 @@ const uint8_t AES_KEY[32] = {
 
 // Firmware version (set automatically in CI via -DFW_VERSION_STR="vX.Y.Z")
 #ifndef FW_VERSION_STR
-#define FW_VERSION_STR "v10.0.0"
+#define FW_VERSION_STR "v11.0.0"
 #endif
 static const char* FW_VERSION = FW_VERSION_STR;
 // ====================================================
@@ -194,6 +194,7 @@ bool performUpdate() {
         return false;
     }
     
+    unsigned long updateStartTime = millis();
     Serial.printf("[OTA] Downloading ENCRYPTED firmware: %s\n", firmwareUrl.c_str());
     
     WiFiClientSecure client;
@@ -294,25 +295,46 @@ bool performUpdate() {
     }
     Serial.println("[SECURITY] ✓ Flash preparation successful");
     
-    // Download, decrypt, and flash in 512-byte blocks (must be multiple of 16)
-    uint8_t buf[512];
+    // Download, decrypt, and flash in 4KB blocks (optimized for speed)
+    const size_t BUFFER_SIZE = 4096;  // 4KB buffer for faster downloads
+    uint8_t* buf = (uint8_t*)malloc(BUFFER_SIZE);
+    if (!buf) {
+        Serial.println("[OTA] ❌ Memory allocation failed");
+        http.end();
+        return false;
+    }
+    
     size_t downloaded = 0;
     size_t written = 0;
-    unsigned long lastActivity = millis();
+    unsigned long startTime = millis();
+    unsigned long lastProgress = millis();
+    
+    Serial.println("[OTA] Starting download + decrypt + flash...");
     
     while (downloaded < (size_t)encryptedDataSize) {
+        // Wait for data with timeout
+        unsigned long waitStart = millis();
+        while (stream->available() < 16 && downloaded < (size_t)encryptedDataSize) {
+            if (millis() - waitStart > 10000) {
+                Serial.println("[OTA] ❌ Download timeout");
+                free(buf);
+                Update.end(false);
+                http.end();
+                return false;
+            }
+            yield();
+        }
+        
         size_t available = stream->available();
-        if (available) {
-            lastActivity = millis();
+        if (available >= 16) {
+            // Read as much as possible (must be multiple of 16 for AES-CBC)
+            size_t toRead = min(available, BUFFER_SIZE);
+            toRead = (toRead / 16) * 16;  // Round to 16-byte boundary
             
-            // Read a multiple of 16 bytes (AES block size)
-            size_t toRead = min(available, sizeof(buf));
-            toRead = (toRead / 16) * 16;  // Round down to 16-byte boundary
-            if (toRead == 0) toRead = 16; // Need at least one block
-            
-            // Make sure we don't read past encrypted data
+            // Don't read past end of encrypted data
             if (downloaded + toRead > (size_t)encryptedDataSize) {
                 toRead = encryptedDataSize - downloaded;
+                toRead = (toRead / 16) * 16;  // Keep 16-byte alignment
             }
             
             if (toRead >= 16) {
@@ -322,19 +344,20 @@ bool performUpdate() {
                     // Decrypt in-place using CBC mode
                     br_aes_ct_cbcdec_run(&aesCtx, iv, buf, bytesRead);
                     
-                    // Calculate how much of this block is actual firmware data
+                    // Calculate actual data to write (excluding padding at end)
                     size_t dataToWrite = bytesRead;
                     if (written + dataToWrite > originalSize) {
-                        dataToWrite = originalSize - written;  // Don't write padding
+                        dataToWrite = originalSize - written;
                     }
                     
                     if (dataToWrite > 0) {
-                        // Update hash with DECRYPTED data (excluding padding)
+                        // Update hash with decrypted data
                         br_sha256_update(&sha256ctx, buf, dataToWrite);
                         
-                        // Write decrypted data to flash
+                        // Write to flash
                         if (Update.write(buf, dataToWrite) != dataToWrite) {
-                            Serial.println("[OTA] Write failed");
+                            Serial.println("[OTA] ❌ Write failed");
+                            free(buf);
                             Update.end(false);
                             http.end();
                             return false;
@@ -344,28 +367,28 @@ bool performUpdate() {
                     
                     downloaded += bytesRead;
                     
-                    // Progress
+                    // Real-time progress every 5% or every 2 seconds
                     int percent = (written * 100) / originalSize;
                     static int lastPercent = -1;
-                    if (percent != lastPercent && percent % 10 == 0) {
-                        Serial.printf("[AES/OTA] Decrypted & written: %d%%\n", percent);
+                    if ((percent != lastPercent && percent % 5 == 0) || (millis() - lastProgress > 2000)) {
+                        unsigned long elapsed = (millis() - startTime) / 1000;
+                        float speed = (downloaded / 1024.0) / (elapsed > 0 ? elapsed : 1);
+                        Serial.printf("[OTA] %d%% | %u KB downloaded | %.1f KB/s\n", 
+                                     percent, downloaded / 1024, speed);
                         lastPercent = percent;
+                        lastProgress = millis();
                     }
                 }
-            }
-        } else {
-            // Check for timeout
-            if (millis() - lastActivity > 30000) {
-                Serial.println("[OTA] ❌ Download timeout");
-                Update.end(false);
-                http.end();
-                return false;
             }
         }
         yield();
     }
     
-    Serial.printf("[AES] ✓ Decryption complete - %u bytes written\n", written);
+    free(buf);
+    
+    unsigned long totalTime = (millis() - startTime) / 1000;
+    float avgSpeed = (downloaded / 1024.0) / (totalTime > 0 ? totalTime : 1);
+    Serial.printf("[AES] ✓ Complete - %u bytes in %lu sec (%.1f KB/s)\n", written, totalTime, avgSpeed);
     
     http.end();
     
@@ -399,8 +422,11 @@ bool performUpdate() {
     }
     
     Serial.println("[SECURITY] ✓ Firmware committed successfully");
+    
+    unsigned long totalUpdateTime = (millis() - updateStartTime) / 1000;
     Serial.println("\n========================================");
     Serial.println("   OTA UPDATE SUCCESSFUL!");
+    Serial.printf("   Total time: %lu seconds\n", totalUpdateTime);
     Serial.println("   All security checks PASSED");
     Serial.println("   Rebooting in 3 seconds...");
     Serial.println("========================================\n");
