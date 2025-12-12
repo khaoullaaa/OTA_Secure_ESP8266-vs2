@@ -73,12 +73,30 @@ jobs:
             exit 1
           fi
 
-      - name: Generate SHA256
+      - name: Generate SHA256 of original firmware
         run: |
           cd firmware_build
+          # Calculate SHA256 of UNENCRYPTED firmware (this is what ESP8266 verifies)
           SHA256=$(sha256sum firmware.bin | awk '{print $1}')
           echo "SHA256=$SHA256" >> $GITHUB_ENV
           echo "$SHA256" > sha256.txt
+          echo "Original firmware SHA256: $SHA256"
+      
+      - name: Install Python dependencies for encryption
+        run: |
+          pip install pycryptodome
+      
+      - name: Encrypt firmware with AES-256
+        run: |
+          cd firmware_build
+          # Encrypt firmware.bin -> firmware.bin.encrypted
+          python3 ../encrypt_firmware.py firmware.bin firmware.bin.encrypted
+          
+          # Replace original with encrypted version
+          mv firmware.bin firmware.bin.original
+          mv firmware.bin.encrypted firmware.bin
+          
+          echo "Encrypted firmware size: $(stat -c%s firmware.bin) bytes"
 
       - name: Create release manifest artifact
         run: |
@@ -88,7 +106,9 @@ jobs:
           {
             "version": "${VERSION}",
             "firmware_url": "https://github.com/${{ github.repository }}/releases/download/${VERSION}/firmware.bin",
-            "sha256": "${{ env.SHA256 }}"
+            "sha256": "${{ env.SHA256 }}",
+            "encrypted": true,
+            "encryption": "AES-256-CTR"
           }
           EOF
 
@@ -105,7 +125,9 @@ jobs:
           {
             "version": "${VERSION}",
             "firmware_url": "https://github.com/${{ github.repository }}/releases/download/${VERSION}/firmware.bin",
-            "sha256": "${{ env.SHA256 }}"
+            "sha256": "${{ env.SHA256 }}",
+            "encrypted": true,
+            "encryption": "AES-256-CTR"
           }
           EOF
           git add manifest.json

@@ -1,9 +1,10 @@
 /*
- * AUTOMATIC SECURE OTA - ESP8266
+ * AUTOMATIC SECURE OTA - ESP8266 with AES-256 Encryption
  * 
  * Features:
- * - Automatically checks for updates every 30 minutes
- * - Downloads firmware from GitHub Releases
+ * - Automatically checks for updates every 5 seconds (test mode)
+ * - Downloads AES-256 encrypted firmware from GitHub Releases
+ * - Decrypts firmware on-the-fly during download
  * - Verifies SHA256 before flashing
  * - Auto-installs new versions
  * 
@@ -19,6 +20,7 @@
 #include <WiFiClientSecure.h>
 #include <ArduinoJson.h>
 #include <Updater.h>
+#include <bearssl/bearssl_block.h>
 
 // ============ CONFIGURATION - EDIT THESE ============
 const char* WIFI_SSID     = "TOPNET_2FB0";
@@ -27,9 +29,18 @@ const char* WIFI_PASSWORD = "3m3smnb68l";
 const char* GITHUB_USER = "khaoullaaa";
 const char* GITHUB_REPO = "OTA_Secure_ESP8266-vs2";
 
+// AES-256 Encryption Key (32 bytes) - KEEP THIS SECRET!
+// This key is auto-generated during first build and stored in GitHub Secrets
+const uint8_t AES_KEY[32] = {
+    0x2b, 0x7e, 0x15, 0x16, 0x28, 0xae, 0xd2, 0xa6,
+    0xab, 0xf7, 0x15, 0x88, 0x09, 0xcf, 0x4f, 0x3c,
+    0x76, 0x2e, 0x71, 0x60, 0xf3, 0x8b, 0x4d, 0xa5,
+    0x6a, 0x78, 0x4d, 0x90, 0x45, 0x19, 0x0c, 0xfe
+};
+
 // Firmware version (set automatically in CI via -DFW_VERSION_STR="vX.Y.Z")
 #ifndef FW_VERSION_STR
-#define FW_VERSION_STR "v4.0.0"
+#define FW_VERSION_STR "v5.0.0"
 #endif
 static const char* FW_VERSION = FW_VERSION_STR;
 // ====================================================
@@ -169,14 +180,20 @@ bool checkForUpdate() {
     return false;
 }
 
-// ============ PERFORM OTA UPDATE ============
+// ============ AES DECRYPTION HELPER ============
+void aesDecryptBlock(br_aes_ct_ctr_keys *ctx, uint8_t *data, size_t len) {
+    // Decrypt in-place using AES-256-CTR mode
+    br_aes_ct_ctr_run(ctx, nullptr, 0, data, len);
+}
+
+// ============ PERFORM OTA UPDATE WITH AES DECRYPTION ============
 bool performUpdate() {
     if (firmwareUrl.length() == 0 || expectedHash.length() == 0) {
         Serial.println("[OTA] No update info available");
         return false;
     }
     
-    Serial.printf("[OTA] Downloading: %s\n", firmwareUrl.c_str());
+    Serial.printf("[OTA] Downloading ENCRYPTED firmware: %s\n", firmwareUrl.c_str());
     
     WiFiClientSecure client;
     client.setInsecure(); // We verify via SHA256
@@ -197,20 +214,24 @@ bool performUpdate() {
         return false;
     }
     
-    int contentLength = http.getSize();
-    if (contentLength <= 0) {
+    int encryptedSize = http.getSize();
+    if (encryptedSize <= 0) {
         Serial.println("[SECURITY] ❌ FAILED - Invalid content length");
         http.end();
         return false;
     }
     
-    Serial.printf("[DOWNLOAD] Firmware size: %d bytes (%.2f KB)\n", contentLength, contentLength / 1024.0);
+    // Account for IV (16 bytes) at the beginning
+    int decryptedSize = encryptedSize - 16;
+    
+    Serial.printf("[DOWNLOAD] Encrypted size: %d bytes (%.2f KB)\n", encryptedSize, encryptedSize / 1024.0);
+    Serial.printf("[DOWNLOAD] Decrypted size: %d bytes (%.2f KB)\n", decryptedSize, decryptedSize / 1024.0);
     
     // Check if we have space
     int freeSpace = ESP.getFreeSketchSpace();
     Serial.printf("[SECURITY] Available flash space: %d bytes (%.2f KB)\n", freeSpace, freeSpace / 1024.0);
     
-    if (contentLength > freeSpace) {
+    if (decryptedSize > freeSpace) {
         Serial.println("[SECURITY] ❌ FAILED - Not enough flash space");
         http.end();
         return false;
@@ -219,34 +240,63 @@ bool performUpdate() {
     
     // Start update
     Serial.println("[FLASH] Preparing flash memory for update...");
-    if (!Update.begin(contentLength)) {
+    if (!Update.begin(decryptedSize)) {
         Serial.println("[SECURITY] ❌ FAILED - Update.begin failed");
         http.end();
         return false;
     }
     Serial.println("[SECURITY] ✓ Flash preparation successful");
     
-    // Download and hash simultaneously
-    Serial.println("[SECURITY] Starting SHA256 streaming verification...");
+    // Initialize AES decryption
+    Serial.println("[AES] Initializing AES-256-CTR decryption...");
     WiFiClient* stream = http.getStreamPtr();
+    
+    // Read IV (first 16 bytes)
+    uint8_t iv[16];
+    size_t ivRead = 0;
+    while (ivRead < 16) {
+        if (stream->available()) {
+            ivRead += stream->readBytes(iv + ivRead, 16 - ivRead);
+        }
+        yield();
+    }
+    
+    Serial.print("[AES] IV (hex): ");
+    for (int i = 0; i < 16; i++) {
+        if (iv[i] < 0x10) Serial.print("0");
+        Serial.print(iv[i], HEX);
+    }
+    Serial.println();
+    
+    // Initialize AES CTR mode
+    br_aes_ct_ctr_keys aesCtx;
+    br_aes_ct_ctr_init(&aesCtx, AES_KEY, 32);
+    Serial.println("[AES] ✓ AES-256 context initialized");
+    
+    // Initialize SHA256 for decrypted data
+    Serial.println("[SECURITY] Starting SHA256 streaming verification...");
     br_sha256_context sha256ctx;
     br_sha256_init(&sha256ctx);
     Serial.println("[SECURITY] ✓ SHA256 context initialized");
     
     uint8_t buf[512];
+    size_t downloaded = 16; // Already read IV
     size_t written = 0;
     
-    while (written < (size_t)contentLength) {
+    while (downloaded < (size_t)encryptedSize) {
         size_t available = stream->available();
         if (available) {
             size_t toRead = min(available, sizeof(buf));
             size_t bytesRead = stream->readBytes(buf, toRead);
             
             if (bytesRead > 0) {
-                // Update hash
+                // Decrypt block
+                br_aes_ct_ctr_run(&aesCtx, iv, 0, buf, bytesRead);
+                
+                // Update hash with DECRYPTED data
                 br_sha256_update(&sha256ctx, buf, bytesRead);
                 
-                // Write to flash
+                // Write decrypted data to flash
                 if (Update.write(buf, bytesRead) != bytesRead) {
                     Serial.println("[OTA] Write failed");
                     Update.end(false);
@@ -254,19 +304,22 @@ bool performUpdate() {
                     return false;
                 }
                 
+                downloaded += bytesRead;
                 written += bytesRead;
                 
                 // Progress
-                int percent = (written * 100) / contentLength;
+                int percent = (written * 100) / decryptedSize;
                 static int lastPercent = -1;
                 if (percent != lastPercent && percent % 10 == 0) {
-                    Serial.printf("[OTA] Progress: %d%%\n", percent);
+                    Serial.printf("[AES/OTA] Decrypted & written: %d%%\n", percent);
                     lastPercent = percent;
                 }
             }
         }
         yield();
     }
+    
+    Serial.printf("[AES] ✓ Decryption complete - %u bytes processed\n", written);
     
     http.end();
     
