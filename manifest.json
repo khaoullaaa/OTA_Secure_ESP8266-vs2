@@ -1,5 +1,5 @@
 {
-  "version": "1.0.0",
+  "version": "v1.0.0",
   "firmware_url": "https://github.com/khaoullaaa/OTA_Secure_ESP8266-vs2/releases/download/v1.0.0/firmware.bin",
-  "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  "sha256": "9b75ecb695d4fea0f115f2324c9561da8f20210b4a68bcaaf737f1970c56190c"
 }
