@@ -23,8 +23,8 @@
 #include <bearssl/bearssl_block.h>
 
 // ============ CONFIGURATION - EDIT THESE ============
-const char* WIFI_SSID     = "S21 de islem";
-const char* WIFI_PASSWORD = "iimq1940";
+const char* WIFI_SSID     = "Airbox-331a";
+const char* WIFI_PASSWORD = "ZDXY2bjRwEDt";
 
 const char* GITHUB_USER = "khaoullaaa";
 const char* GITHUB_REPO = "OTA_Secure_ESP8266-vs2";
