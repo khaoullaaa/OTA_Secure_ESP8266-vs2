@@ -23,8 +23,8 @@
 #include <bearssl/bearssl_block.h>
 
 // ============ CONFIGURATION - EDIT THESE ============
-const char* WIFI_SSID     = "TOPNET_ELML";
-const char* WIFI_PASSWORD = "sdwl4yna8k";
+const char* WIFI_SSID     = "Airbox-C398";
+const char* WIFI_PASSWORD = "10261250";
 
 const char* GITHUB_USER = "khaoullaaa";
 const char* GITHUB_REPO = "OTA_Secure_ESP8266-vs2";
@@ -40,7 +40,7 @@ const uint8_t AES_KEY[32] = {
 
 // Firmware version (set automatically in CI via -DFW_VERSION_STR="vX.Y.Z")
 #ifndef FW_VERSION_STR
-#define FW_VERSION_STR "v13.0.0"
+#define FW_VERSION_STR "v14.0.0"
 #endif
 static const char* FW_VERSION = FW_VERSION_STR;
 // ====================================================
