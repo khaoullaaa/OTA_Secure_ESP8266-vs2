@@ -40,7 +40,7 @@ const uint8_t AES_KEY[32] = {
 
 // Firmware version (set automatically in CI via -DFW_VERSION_STR="vX.Y.Z")
 #ifndef FW_VERSION_STR
-#define FW_VERSION_STR "v19.0.0"
+#define FW_VERSION_STR "v18.0.0"
 #endif
 static const char* FW_VERSION = FW_VERSION_STR;
 // ====================================================
